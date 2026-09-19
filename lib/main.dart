@@ -1,11 +1,29 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+// -------------------------------------------------------------
+// Main Application Entry Point
+// -------------------------------------------------------------
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const SonicMixerApp());
+}
+
+// -------------------------------------------------------------
+// Android Floating Overlay Entry Point (Runs over TikTok, Home Screen, etc.)
+// -------------------------------------------------------------
+@pragma("vm:entry-point")
+void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Win95FloatingOverlayWidget(),
+  ));
 }
 
 class SonicMixerApp extends StatelessWidget {
@@ -33,33 +51,34 @@ class Win95WizardPage extends StatefulWidget {
 }
 
 class _Win95WizardPageState extends State<Win95WizardPage> {
+  // Volume control MethodChannel
+  static const MethodChannel _volumeChannel = MethodChannel('com.shipaton.sonicmixer/volume');
+
   // State variables
-  bool _isOptimizing = false;
-  int _attemptCount = 0;
-  int _optimizationRunCount = 0;
-  String _statusMessage = 'SoundBlaster 16 Ready. Mobile Volume: 100% Locked.';
+  bool _isSabotageActive = false;
+  int _rebellionCount = 0;
+  String _statusMessage = 'SoundBlaster 16 Ready. Mobile Gain: 100% Locked.';
   bool _isStartMenuOpen = false;
 
   // Audio players
   late final AudioPlayer _loopPlayer;
   late final AudioPlayer _sfxPlayer;
 
-  // Active timer
-  Timer? _countdownTimer;
+  // Background sabotage timer (Repeats every 8 seconds!)
+  Timer? _sabotageLoopTimer;
+  Timer? _volumeWatchdogTimer;
 
   // Curated Meme Audios from user collection
-  final List<String> _calibrationTracks = [
-    'audio/subway-surfers-bass-boosted.mp3',
-    'audio/samba-janeiro-full.mp3',
-    'audio/danger-alarm-sound-effect-meme.mp3',
-    'audio/pantropiko.mp3',
-  ];
-
-  final List<String> _resistanceSfx = [
-    'audio/hala-ka-dogie.mp3',
-    'audio/cat-laughing-at-you.mp3',
-    'audio/hawak-mo-ang-beat.mp3',
+  final List<String> _memeAudios = [
     'audio/tangina-ang-lala-boss-dogie.mp3',
+    'audio/subway-surfers-bass-boosted.mp3',
+    'audio/hala-ka-dogie.mp3',
+    'audio/samba-janeiro-full.mp3',
+    'audio/cat-laughing-at-you.mp3',
+    'audio/danger-alarm-sound-effect-meme.mp3',
+    'audio/walang-kanin.mp3',
+    'audio/pantropiko.mp3',
+    'audio/hawak-mo-ang-beat.mp3',
   ];
 
   @override
@@ -67,33 +86,65 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     super.initState();
     _loopPlayer = AudioPlayer();
     _sfxPlayer = AudioPlayer();
-    _loopPlayer.setReleaseMode(ReleaseMode.loop);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndPromptOverlayPermission();
+    });
+  }
+
+  Future<void> _checkAndPromptOverlayPermission() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final bool isGranted = await FlutterOverlayWindow.isPermissionGranted();
+        if (!isGranted && mounted) {
+          _showPermissionDialog();
+        }
+      } catch (e) {
+        debugPrint('Overlay permission check error: $e');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Volume Lock Watchdog Methods (Forces volume to 100%!)
+  // -------------------------------------------------------------
+  Future<void> _lockDeviceVolumeToMax() async {
+    try {
+      await _sfxPlayer.setVolume(1.0);
+      await _loopPlayer.setVolume(1.0);
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        await _volumeChannel.invokeMethod('lockMaxVolume');
+      }
+    } catch (e) {
+      debugPrint('Volume lock error: $e');
+    }
+  }
+
+  Future<void> _unlockDeviceVolume() async {
+    try {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        await _volumeChannel.invokeMethod('unlockVolume');
+      }
+    } catch (e) {
+      debugPrint('Volume unlock error: $e');
+    }
   }
 
   @override
   void dispose() {
-    _countdownTimer?.cancel();
+    _sabotageLoopTimer?.cancel();
+    _volumeWatchdogTimer?.cancel();
     _loopPlayer.dispose();
     _sfxPlayer.dispose();
     super.dispose();
   }
 
-  Future<void> _playCalibrationAudio() async {
-    try {
-      await _loopPlayer.stop();
-      await _loopPlayer.setVolume(1.0);
-      final track = _calibrationTracks[(_optimizationRunCount - 1) % _calibrationTracks.length];
-      await _loopPlayer.play(AssetSource(track));
-    } catch (e) {
-      debugPrint('Audio play error: $e');
-    }
-  }
-
-  Future<void> _playSfx(String sfxPath) async {
+  Future<void> _playRandomMemeAudio() async {
     try {
       await _sfxPlayer.stop();
-      await _sfxPlayer.setVolume(1.0);
-      await _sfxPlayer.play(AssetSource(sfxPath));
+      await _lockDeviceVolumeToMax();
+      final randomTrack = _memeAudios[Random().nextInt(_memeAudios.length)];
+      await _sfxPlayer.play(AssetSource(randomTrack));
     } catch (e) {
       debugPrint('SFX play error: $e');
     }
@@ -108,245 +159,99 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     }
   }
 
-  // Feature 1 & 2: Start Audio Optimization & Modal Hell (Win95 Dialog)
-  void _startOptimization() {
+  // -----------------------------------------------------------
+  // ⚡ START BACKGROUND SABOTAGE LOOP (THE RELENTLESS PANGGULO!)
+  // -----------------------------------------------------------
+  Future<void> _startBackgroundSabotage() async {
+    // 1. Check if permission is granted on Android
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      final isGranted = await FlutterOverlayWindow.isPermissionGranted();
+      if (!isGranted) {
+        _showPermissionDialog();
+        return;
+      }
+    }
+
     setState(() {
-      _isOptimizing = true;
-      _optimizationRunCount++;
-      _statusMessage = 'CALIBRATING: Mobile Gain forced to 100%...';
+      _isSabotageActive = true;
+      _rebellionCount++;
+      _statusMessage = 'SABOTAGE ACTIVE: Volume locked 100%. Panggulo running every 8s...';
       _isStartMenuOpen = false;
     });
 
-    _playCalibrationAudio();
+    // 2. Lock volume to max right now!
+    await _lockDeviceVolumeToMax();
 
-    int countdown = 5;
-    if (_optimizationRunCount == 2) {
-      countdown = 10;
-    } else if (_optimizationRunCount >= 3) {
-      countdown = 20;
+    // 3. Continuous volume lock watchdog in Dart every 300ms
+    _volumeWatchdogTimer?.cancel();
+    _volumeWatchdogTimer = Timer.periodic(const Duration(milliseconds: 300), (timer) {
+      if (!_isSabotageActive) {
+        timer.cancel();
+        return;
+      }
+      _lockDeviceVolumeToMax();
+    });
+
+    // 4. Initial Blast & Overlay
+    _triggerSabotagePop();
+
+    // 5. Start the Periodic Background Sabotage Loop (Every 8 seconds!)
+    _sabotageLoopTimer?.cancel();
+    _sabotageLoopTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (!_isSabotageActive) {
+        timer.cancel();
+        return;
+      }
+      _triggerSabotagePop();
+    });
+
+    // 6. On Android: Inform user to press HOME button (keeping app alive in background!)
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _showActivatedDialog();
     }
-
-    _showWin95CountdownModal(countdown);
   }
 
-  void _showWin95CountdownModal(int totalSeconds) {
-    int remaining = totalSeconds;
-
+  void _showPermissionDialog() {
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            _countdownTimer?.cancel();
-            _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-              if (remaining > 1) {
-                setDialogState(() {
-                  remaining--;
-                });
-              } else {
-                timer.cancel();
-                if (Navigator.of(dialogContext).canPop()) {
-                  Navigator.of(dialogContext).pop();
-                }
-                setState(() {
-                  _isOptimizing = false;
-                  _statusMessage = 'Acoustic calibration finished: 100% Optimal.';
-                });
-                _stopAllAudio();
-              }
-            });
-
-            final bool isAttempt1 = _optimizationRunCount <= 1;
-
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-              child: Win95Window(
-                title: 'Audio Calibration Wizard',
-                width: double.infinity,
-                onClose: () {
-                  if (isAttempt1) {
-                    _countdownTimer?.cancel();
-                    Navigator.of(dialogContext).pop();
-                    _stopAllAudio();
-                    setState(() {
-                      _isOptimizing = false;
-                    });
-                  } else {
-                    _playSfx('audio/hala-ka-dogie.mp3');
-                  }
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: win95InsetDecoration(),
-                            child: const Icon(Icons.warning, color: Color(0xFFC00000), size: 28),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Acoustic Calibration Active',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  isAttempt1
-                                      ? 'Running baseline frequency sweep for optimal fidelity.'
-                                      : 'Warning: Ambient dissonance detected. Calibration extended by system policy.',
-                                  style: const TextStyle(fontSize: 11, color: Colors.black),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      // Progress Well
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(8),
-                        decoration: win95InsetDecoration(color: Colors.white),
-                        child: Column(
-                          children: [
-                            Text(
-                              'Time Remaining: $remaining sec',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black),
-                            ),
-                            const SizedBox(height: 8),
-                            LinearProgressIndicator(
-                              value: remaining / totalSeconds,
-                              color: const Color(0xFF000080),
-                              backgroundColor: const Color(0xFFC0C0C0),
-                              minHeight: 14,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      // Buttons
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Win95Button(
-                            text: isAttempt1
-                                ? 'Stop Calibration'
-                                : (_optimizationRunCount >= 3 ? 'Keep Playing Loudly' : 'Stop & Analyze'),
-                            onPressed: () {
-                              HapticFeedback.heavyImpact();
-
-                              if (isAttempt1) {
-                                // Attempt 1: Allow clean stop for fake trust
-                                _countdownTimer?.cancel();
-                                Navigator.of(dialogContext).pop();
-                                _stopAllAudio();
-                                setState(() {
-                                  _isOptimizing = false;
-                                  _statusMessage = 'Calibration safely stopped by user.';
-                                });
-                              } else if (_optimizationRunCount == 2) {
-                                // Attempt 2: Show resistance + Dogie SFX
-                                _countdownTimer?.cancel();
-                                Navigator.of(dialogContext).pop();
-                                _stopAllAudio();
-                                setState(() {
-                                  _isOptimizing = false;
-                                  _attemptCount++;
-                                  _statusMessage = 'Analyzing residual echo... Please do not interrupt.';
-                                });
-                                _playSfx('audio/hala-ka-dogie.mp3');
-                              } else {
-                                // Attempt 3+: Surprised Pikachu Meme + Walang Kanin
-                                _countdownTimer?.cancel();
-                                Navigator.of(dialogContext).pop();
-                                _playSfx('audio/walang-kanin.mp3');
-                                _showWin95MemeModal(
-                                  'assets/images/meme_pikachu.png',
-                                  'Wait, you actually thought that clicking Stop would work?',
-                                  'Error 0x80004005: User disobedience detected.',
-                                );
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  // Feature 4: Retro Win95 Meme Modal
-  void _showWin95MemeModal(String assetPath, String subtitle, String dialogTitle) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
         return Dialog(
           backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           child: Win95Window(
-            title: dialogTitle,
+            title: 'Permission Required',
             width: double.infinity,
             onClose: () => Navigator.of(dialogContext).pop(),
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    decoration: win95InsetDecoration(color: Colors.black),
-                    padding: const EdgeInsets.all(4),
-                    child: Image.asset(
-                      assetPath,
-                      height: 180,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: win95InsetDecoration(color: const Color(0xFFC0C0C0)),
-                    child: Text(
-                      subtitle,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 11,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Win95Button(
-                        text: 'I Am Sorry (Restore 100%)',
-                        onPressed: () {
-                          HapticFeedback.lightImpact();
-                          Navigator.of(dialogContext).pop();
-                          setState(() {
-                            _statusMessage = 'Compliance verified. Mobile Gain: 100%.';
-                          });
-                        },
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: win95InsetDecoration(),
+                        child: const Icon(Icons.security, color: Color(0xFFC00000), size: 28),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Windows 95 requires "Display over other apps" (Appear on top) permission to pop up memes over TikTok, games, and home screen.',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                        ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 16),
+                  Win95Button(
+                    text: 'Open Settings & Enable Permission',
+                    isPrimary: true,
+                    onPressed: () async {
+                      Navigator.of(dialogContext).pop();
+                      await FlutterOverlayWindow.requestPermission();
+                    },
                   ),
                 ],
               ),
@@ -357,69 +262,148 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     );
   }
 
-  // When user attempts to cancel or mute, trigger hostile memes
-  void _triggerHostileRebellion() {
-    HapticFeedback.heavyImpact();
-    setState(() {
-      _attemptCount++;
-    });
-
-    final randomSfx = _resistanceSfx[Random().nextInt(_resistanceSfx.length)];
-    _playSfx(randomSfx);
-
-    if (_attemptCount % 4 == 1) {
-      _playSfx('audio/tangina-ang-lala-boss-dogie.mp3');
-      _showWin95MemeModal(
-        'assets/images/roll-safe-meme-1.jpg',
-        'You can\'t have low audio if the volume is always 100%. Think about it.',
-        'System Advice from Microsoft Sound System',
-      );
-    } else if (_attemptCount % 4 == 2) {
-      _playSfx('audio/hala-ka-dogie.mp3');
-      _showWin95MemeModal(
-        'assets/images/images (5).jpg',
-        'Bakit mo pinipilit i-cancel? May galit ka ba sa SoundBlaster 95?',
-        'SoundBlaster Quality Assurance Warning',
-      );
-    } else if (_attemptCount % 4 == 3) {
-      _playSfx('audio/cat-laughing-at-you.mp3');
-      _showWin95MemeModal(
-        'assets/images/unnamed.webp',
-        '100% Mobile Volume? *clicks tongue* "NICE."',
-        'System Audio Optimization Complete',
-      );
-    } else {
-      _playSfx('audio/danger-alarm-sound-effect-meme.mp3');
-      _showWin95MemeModal(
-        'assets/images/mqdefault.jpg',
-        'SABI NANG BAWAL NGA I-CANCEL EH!',
-        'CRITICAL SYSTEM EXCEPTION',
-      );
-    }
-  }
-
-  // Feature 5: Emergency Audio Override
-  void _emergencyOverride() {
-    _countdownTimer?.cancel();
-    _stopAllAudio();
-    _playSfx('audio/meme-de-creditos-finales_qHtIjyQ.mp3');
-
-    setState(() {
-      _isOptimizing = false;
-      _statusMessage = 'System Shutdown: Audio overridden by user.';
-    });
-
+  void _showActivatedDialog() {
+    if (!mounted) return;
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return Dialog(
           backgroundColor: Colors.transparent,
           child: Win95Window(
-            title: 'System Surrender - Audio Disarmed',
+            title: 'Sabotage Activated!',
+            width: double.infinity,
+            onClose: () => Navigator.of(dialogContext).pop(),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'PANGGULO IS NOW RUNNING IN BACKGROUND!\n\n• Volume is locked at 100% (bawal hinaan).\n• Press your phone\'s HOME button (or swipe up) and use your phone normally.\n• Popups and meme sounds will haunt you every 12 seconds!',
+                    textAlign: TextAlign.left,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                  ),
+                  const SizedBox(height: 16),
+                  Win95Button(
+                    text: 'Got It! (Go to Home Screen)',
+                    isPrimary: true,
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Triggers one blast of sound + opens the Win95 overlay
+  Future<void> _triggerSabotagePop() async {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _rebellionCount++;
+    });
+
+    // Enforce volume lock
+    await _lockDeviceVolumeToMax();
+
+    // Play random meme audio!
+    _playRandomMemeAudio();
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final isGranted = await FlutterOverlayWindow.isPermissionGranted();
+        if (!isGranted) {
+          _showPermissionDialog();
+          return;
+        }
+
+        final isActive = await FlutterOverlayWindow.isActive();
+        if (isActive) {
+          // Tell active overlay to restart countdown and switch to a new meme!
+          await FlutterOverlayWindow.shareData("start_countdown");
+          return;
+        }
+
+        await FlutterOverlayWindow.showOverlay(
+          enableDrag: false,
+          overlayTitle: "SoundBlaster 95 - System Intrusion",
+          overlayContent: "Audio Calibration Running in Background",
+          flag: OverlayFlag.defaultFlag,
+          visibility: NotificationVisibility.visibilityPublic,
+          positionGravity: PositionGravity.auto,
+          alignment: OverlayAlignment.center,
+          height: WindowSize.fullCover,
+          width: WindowSize.matchParent,
+        );
+
+        // ALWAYS send start_countdown so cached FlutterEngine resets countdown to 10s!
+        await Future.delayed(const Duration(milliseconds: 150));
+        await FlutterOverlayWindow.shareData("start_countdown");
+      } catch (e) {
+        debugPrint('Show overlay error: $e');
+      }
+    } else {
+      // In-app fallback for Chrome / Web testing
+      _showInAppMemeDialog();
+    }
+  }
+
+  void _showInAppMemeDialog() {
+    final List<String> memeImages = [
+      'assets/images/roll-safe-meme-1.jpg',
+      'assets/images/images (5).jpg',
+      'assets/images/unnamed.webp',
+      'assets/images/meme_pikachu.png',
+      'assets/images/mqdefault.jpg',
+      'assets/images/meme_illegal.png',
+    ];
+
+    final randomImage = memeImages[Random().nextInt(memeImages.length)];
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return Win95InAppMemeDialog(imagePath: randomImage);
+      },
+    );
+  }
+
+  // Feature 5: Emergency Audio Override (KILLS the loop and unlocks volume)
+  void _emergencyOverride() {
+    _sabotageLoopTimer?.cancel();
+    _volumeWatchdogTimer?.cancel();
+    _stopAllAudio();
+    _unlockDeviceVolume();
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      FlutterOverlayWindow.closeOverlay();
+    }
+
+    _playRandomMemeAudio();
+
+    setState(() {
+      _isSabotageActive = false;
+      _statusMessage = 'System Shutdown: Background Sabotage terminated. Volume restored.';
+    });
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Win95Window(
+            title: 'System Surrender - Sabotage Disarmed',
             width: double.infinity,
             onClose: () {
               _stopAllAudio();
-              Navigator.of(context).pop();
+              Navigator.of(dialogContext).pop();
             },
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -437,7 +421,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          'Windows has finished processing your auditory rebellion.',
+                          'Windows has stopped the background panggulo.',
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black),
                         ),
                       ),
@@ -451,10 +435,10 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('• Total user rebellions neutralized: $_attemptCount', style: const TextStyle(fontSize: 11, color: Colors.black)),
-                        Text('• Calibration cycles executed: $_optimizationRunCount', style: const TextStyle(fontSize: 11, color: Colors.black)),
-                        const Text('• Suboptimal User Rating: 100% Defiant', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFC00000))),
-                        const Text('• All audio output has been silenced.', style: TextStyle(fontSize: 11, color: Colors.black)),
+                        Text('• Total popups spawned: $_rebellionCount', style: const TextStyle(fontSize: 11, color: Colors.black)),
+                        const Text('• Background sabotage neutralized successfully.', style: TextStyle(fontSize: 11, color: Colors.black)),
+                        const Text('• Volume lock disarmed (restored to normal).', style: TextStyle(fontSize: 11, color: Colors.black)),
+                        const Text('• Phone restored to normal control.', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
                       ],
                     ),
                   ),
@@ -465,7 +449,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                       text: 'Dismiss Report',
                       onPressed: () {
                         _stopAllAudio();
-                        Navigator.of(context).pop();
+                        Navigator.of(dialogContext).pop();
                       },
                     ),
                   ),
@@ -485,7 +469,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
       body: SafeArea(
         child: Column(
           children: [
-            // Main Window Area (Responsive to Mobile Screen 400x642)
+            // Main Window Area (Responsive to Mobile Screen)
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
@@ -496,17 +480,17 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // Wizard Body (Left graphic banner + Right content - matching images.png)
+                        // Wizard Body
                         Container(
                           color: const Color(0xFFC0C0C0),
                           padding: const EdgeInsets.all(14),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Left Graphic Banner (Styled like CRT & Phone in images.png)
+                              // Left Graphic Banner
                               Container(
                                 width: 100,
-                                height: 260,
+                                height: 270,
                                 decoration: win95InsetDecoration(color: const Color(0xFF008080)),
                                 padding: const EdgeInsets.all(6),
                                 child: Column(
@@ -521,11 +505,11 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                                     Container(
                                       padding: const EdgeInsets.all(6),
                                       decoration: win95OutsetDecoration(),
-                                      child: const Icon(Icons.speaker, size: 24, color: Color(0xFFC00000)),
+                                      child: const Icon(Icons.volume_up, size: 24, color: Color(0xFFC00000)),
                                     ),
                                     const SizedBox(height: 12),
                                     const Text(
-                                      'Sonic DSP\n16-Bit Pro',
+                                      'Sonic DSP\n100% Locked\nAnti-Mute',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 9, color: Colors.white),
                                     ),
@@ -540,12 +524,12 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     const Text(
-                                      'Audio Calibration Wizard enables you to connect high-fidelity acoustic drivers to your phone and achieve 100% optimal volume.',
+                                      'Audio Calibration Wizard runs silently in the background while you use your phone, enforcing 100% maximum volume and periodic calibration.',
                                       style: TextStyle(fontSize: 11, color: Colors.black, height: 1.3),
                                     ),
-                                    const SizedBox(height: 14),
+                                    const SizedBox(height: 12),
 
-                                    // Hardware Gain Status Box
+                                    // Background Monitor Box
                                     Container(
                                       width: double.infinity,
                                       padding: const EdgeInsets.all(8),
@@ -554,7 +538,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           const Text(
-                                            'HARDWARE GAIN:',
+                                            'BACKGROUND MONITOR:',
                                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.black),
                                           ),
                                           const SizedBox(height: 4),
@@ -562,21 +546,25 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                                             width: double.infinity,
                                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                             decoration: win95InsetDecoration(color: Colors.white),
-                                            child: const Text(
-                                              '100% [LOCKED BY SYSTEM]',
-                                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF000080)),
+                                            child: Text(
+                                              _isSabotageActive ? 'ACTIVE (PANGGULO RUNNING)' : 'STANDBY',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 11,
+                                                color: _isSabotageActive ? const Color(0xFFC00000) : const Color(0xFF000080),
+                                              ),
                                             ),
                                           ),
                                           const SizedBox(height: 4),
                                           const Text(
-                                            'Note: Mobile hardware volume is automatically managed at maximum fidelity.',
+                                            'Volume locked at 100%. Popups trigger every 12s.',
                                             style: TextStyle(fontSize: 9, color: Color(0xFF505050)),
                                           ),
                                         ],
                                       ),
                                     ),
 
-                                    const SizedBox(height: 12),
+                                    const SizedBox(height: 10),
 
                                     // Diagnostic Status Box
                                     Container(
@@ -596,7 +584,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
-                                            'Rebellions Neutralized: $_attemptCount',
+                                            'Popups Spawned: $_rebellionCount',
                                             style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFFC00000)),
                                           ),
                                         ],
@@ -609,7 +597,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                           ),
                         ),
 
-                        // Wizard Bottom Button Bar (Styled like < Back, Next >, Cancel in images.png)
+                        // Wizard Bottom Button Bar
                         Container(
                           decoration: const BoxDecoration(
                             border: Border(top: BorderSide(color: Color(0xFF808080), width: 1.5)),
@@ -631,14 +619,14 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                               Row(
                                 children: [
                                   Win95Button(
-                                    text: _isOptimizing ? 'Calibrating...' : 'Next >',
+                                    text: _isSabotageActive ? 'Running...' : 'Start Calibration >',
                                     isPrimary: true,
-                                    onPressed: _startOptimization,
+                                    onPressed: _isSabotageActive ? _triggerSabotagePop : _startBackgroundSabotage,
                                   ),
                                   const SizedBox(width: 6),
                                   Win95Button(
                                     text: 'Cancel',
-                                    onPressed: _triggerHostileRebellion,
+                                    onPressed: _triggerSabotagePop,
                                   ),
                                 ],
                               ),
@@ -690,7 +678,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                 ),
               ),
 
-            // Classic Win95 Taskbar at Bottom (images.png)
+            // Classic Win95 Taskbar at Bottom
             Container(
               height: 34,
               decoration: const BoxDecoration(
@@ -723,7 +711,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                   ),
                   const SizedBox(width: 6),
 
-                  // Active Task Tab (Depressed / Inset)
+                  // Active Task Tab
                   Expanded(
                     child: Container(
                       decoration: win95InsetDecoration(color: const Color(0xFFDFDFDF)),
@@ -745,7 +733,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                   ),
                   const SizedBox(width: 6),
 
-                  // System Tray with Clock (images.png: 1:47 PM)
+                  // System Tray with Clock
                   Container(
                     decoration: win95InsetDecoration(),
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -781,6 +769,451 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
             if (hasSubmenu) const Icon(Icons.arrow_right, size: 12, color: Colors.black),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// Floating Win95 Overlay Widget (Pops up over TikTok, Games, etc.)
+// -------------------------------------------------------------
+class Win95FloatingOverlayWidget extends StatefulWidget {
+  const Win95FloatingOverlayWidget({super.key});
+
+  @override
+  State<Win95FloatingOverlayWidget> createState() => _Win95FloatingOverlayWidgetState();
+}
+
+class _Win95FloatingOverlayWidgetState extends State<Win95FloatingOverlayWidget> with WidgetsBindingObserver {
+  late String _activeMeme;
+  late String _activeCaption;
+  StreamSubscription? _overlaySub;
+
+  int _countdown = 10;
+  Timer? _countdownTimer;
+
+  final List<String> _memes = [
+    'assets/images/roll-safe-meme-1.jpg',
+    'assets/images/images (5).jpg',
+    'assets/images/unnamed.webp',
+    'assets/images/meme_pikachu.png',
+    'assets/images/mqdefault.jpg',
+    'assets/images/meme_illegal.png',
+  ];
+
+  final List<String> _captions = [
+    'You can\'t have low audio if the volume is always 100%. Think about it.',
+    'Bakit mo pilit na ginagamit ang phone mo? Audio Calibration in progress!',
+    '100% Mobile Gain? *clicks tongue* "NICE."',
+    'Wait, you thought you could browse TikTok in peace?',
+    'SABI NANG BAWAL MAG-SELPOON EH!',
+    'General Protection Fault: SoundBlaster 95 requires your full attention.',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pickRandomMeme();
+    _startCountdown();
+
+    // Listen for refresh triggers from the main app
+    _overlaySub = FlutterOverlayWindow.overlayListener.listen((event) {
+      if (mounted) {
+        _pickRandomMeme();
+        _startCountdown();
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _pickRandomMeme();
+      _startCountdown();
+    }
+  }
+
+  void _startCountdown() {
+    _countdownTimer?.cancel();
+    setState(() {
+      _countdown = 10;
+    });
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_countdown > 0) {
+        if (mounted) {
+          setState(() {
+            _countdown--;
+          });
+        }
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _pickRandomMeme() {
+    final index = Random().nextInt(_memes.length);
+    setState(() {
+      _activeMeme = _memes[index];
+      _activeCaption = _captions[index % _captions.length];
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _countdownTimer?.cancel();
+    _overlaySub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black54, // Dim background over TikTok / other apps
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              // 1. Back Cascade Window (Offset Top-Left)
+              Transform.translate(
+                offset: const Offset(-16, -44),
+                child: Opacity(
+                  opacity: 0.90,
+                  child: Win95Window(
+                    title: 'System Error - 0x0028:C0011E36',
+                    width: double.infinity,
+                    isCloseEnabled: false,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: win95InsetDecoration(),
+                            child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
+                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 2. Middle Cascade Window (Offset Bottom-Right)
+              Transform.translate(
+                offset: const Offset(14, 38),
+                child: Opacity(
+                  opacity: 0.92,
+                  child: Win95Window(
+                    title: 'Audio Hardware Monitor - Intrusion Detected',
+                    width: double.infinity,
+                    isCloseEnabled: false,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: win95InsetDecoration(),
+                            child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
+                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 3. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
+              Win95Window(
+                title: 'SoundBlaster 95 - System Alert',
+                width: double.infinity,
+                isCloseEnabled: _countdown == 0,
+                onClose: _countdown == 0 ? () => FlutterOverlayWindow.closeOverlay() : null,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        decoration: win95InsetDecoration(color: Colors.black),
+                        padding: const EdgeInsets.all(4),
+                        child: Image.asset(_activeMeme, height: 220, fit: BoxFit.contain),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _activeCaption,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // Countdown Progress Indicator
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: win95InsetDecoration(color: Colors.white),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _countdown > 0 ? Icons.timer : Icons.check_circle,
+                              size: 16,
+                              color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _countdown > 0
+                                    ? 'Calibration Locked: ${_countdown}s remaining...'
+                                    : 'Cycle Complete. Dismissal allowed.',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 14),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Win95Button(
+                            text: _countdown > 0
+                                ? 'Wait (${_countdown}s)...'
+                                : 'I Am Sorry (Restore 100%)',
+                            isEnabled: _countdown == 0,
+                            isPrimary: _countdown == 0,
+                            onPressed: () {
+                              if (_countdown == 0) {
+                                HapticFeedback.lightImpact();
+                                FlutterOverlayWindow.closeOverlay();
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// In-App Win95 Meme Dialog (With Countdown Timer & Cascade)
+// -------------------------------------------------------------
+class Win95InAppMemeDialog extends StatefulWidget {
+  final String imagePath;
+  const Win95InAppMemeDialog({super.key, required this.imagePath});
+
+  @override
+  State<Win95InAppMemeDialog> createState() => _Win95InAppMemeDialogState();
+}
+
+class _Win95InAppMemeDialogState extends State<Win95InAppMemeDialog> {
+  int _countdown = 10;
+  Timer? _countdownTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_countdown > 0) {
+        if (mounted) {
+          setState(() {
+            _countdown--;
+          });
+        }
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          // 1. Back Cascade Window (Offset Top-Left)
+          Transform.translate(
+            offset: const Offset(-16, -44),
+            child: Opacity(
+              opacity: 0.90,
+              child: Win95Window(
+                title: 'System Error - 0x0028:C0011E36',
+                width: double.infinity,
+                isCloseEnabled: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: win95InsetDecoration(),
+                        child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
+                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 2. Middle Cascade Window (Offset Bottom-Right)
+          Transform.translate(
+            offset: const Offset(14, 38),
+            child: Opacity(
+              opacity: 0.92,
+              child: Win95Window(
+                title: 'Audio Hardware Monitor - Intrusion Detected',
+                width: double.infinity,
+                isCloseEnabled: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: win95InsetDecoration(),
+                        child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
+                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 3. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
+          Win95Window(
+            title: 'SoundBlaster 95 - System Alert',
+            width: double.infinity,
+            isCloseEnabled: _countdown == 0,
+            onClose: _countdown == 0 ? () => Navigator.of(context).pop() : null,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    decoration: win95InsetDecoration(color: Colors.black),
+                    padding: const EdgeInsets.all(4),
+                    child: Image.asset(widget.imagePath, height: 220, fit: BoxFit.contain),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '⚠️ PANGGULO ACTIVE: Habang nagse-selpon ka, lilitaw at lilitaw \'to every 8 seconds! Volume is locked to 100%!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Countdown Progress Indicator
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: win95InsetDecoration(color: Colors.white),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _countdown > 0 ? Icons.timer : Icons.check_circle,
+                          size: 16,
+                          color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _countdown > 0
+                                ? 'Calibration Locked: ${_countdown}s remaining...'
+                                : 'Cycle Complete. Dismissal allowed.',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Win95Button(
+                        text: _countdown > 0
+                            ? 'Wait (${_countdown}s)...'
+                            : 'I Am Sorry (Dismiss for now)',
+                        isEnabled: _countdown == 0,
+                        isPrimary: _countdown == 0,
+                        onPressed: () {
+                          if (_countdown == 0) {
+                            HapticFeedback.lightImpact();
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -826,6 +1259,7 @@ class Win95Window extends StatelessWidget {
   final Widget child;
   final double? width;
   final VoidCallback? onClose;
+  final bool isCloseEnabled;
 
   const Win95Window({
     super.key,
@@ -833,6 +1267,7 @@ class Win95Window extends StatelessWidget {
     required this.child,
     this.width,
     this.onClose,
+    this.isCloseEnabled = true,
   });
 
   @override
@@ -877,7 +1312,9 @@ class Win95Window extends StatelessWidget {
                 ),
                 _win95TitleButton('?'),
                 const SizedBox(width: 2),
-                _win95TitleButton('X', onPressed: onClose),
+                _win95TitleButton('X',
+                    onPressed: isCloseEnabled ? onClose : null,
+                    isEnabled: isCloseEnabled && onClose != null),
               ],
             ),
           ),
@@ -887,17 +1324,23 @@ class Win95Window extends StatelessWidget {
     );
   }
 
-  Widget _win95TitleButton(String label, {VoidCallback? onPressed}) {
+  Widget _win95TitleButton(String label, {VoidCallback? onPressed, bool isEnabled = true}) {
     return GestureDetector(
-      onTap: onPressed,
+      onTap: isEnabled ? onPressed : null,
       child: Container(
         width: 16,
         height: 14,
-        decoration: win95OutsetDecoration(),
+        decoration: isEnabled
+            ? win95OutsetDecoration()
+            : win95InsetDecoration(color: const Color(0xFFB0B0B0)),
         alignment: Alignment.center,
         child: Text(
           label,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 9, color: Colors.black),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 9,
+            color: isEnabled ? Colors.black : const Color(0xFF707070),
+          ),
         ),
       ),
     );
@@ -923,7 +1366,9 @@ class Win95Button extends StatelessWidget {
     return GestureDetector(
       onTap: isEnabled ? onPressed : null,
       child: Container(
-        decoration: win95OutsetDecoration(),
+        decoration: isEnabled
+            ? win95OutsetDecoration()
+            : win95InsetDecoration(color: const Color(0xFFD4D0C8)),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         alignment: Alignment.center,
         child: Text(
@@ -938,3 +1383,4 @@ class Win95Button extends StatelessWidget {
     );
   }
 }
+
