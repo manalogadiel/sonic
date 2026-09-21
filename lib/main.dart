@@ -50,7 +50,7 @@ class Win95WizardPage extends StatefulWidget {
   State<Win95WizardPage> createState() => _Win95WizardPageState();
 }
 
-class _Win95WizardPageState extends State<Win95WizardPage> {
+class _Win95WizardPageState extends State<Win95WizardPage> with WidgetsBindingObserver {
   // Volume control MethodChannel
   static const MethodChannel _volumeChannel = MethodChannel('com.shipaton.sonicmixer/volume');
 
@@ -84,6 +84,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loopPlayer = AudioPlayer();
     _sfxPlayer = AudioPlayer();
 
@@ -92,12 +93,36 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _onAppResumed();
+    }
+  }
+
+  Future<void> _onAppResumed() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final bool isGranted = await FlutterOverlayWindow.isPermissionGranted();
+        if (isGranted && !_isSabotageActive && mounted) {
+          // If permission is now granted upon returning from Settings, auto-activate immediately!
+          _startBackgroundSabotage();
+        }
+      } catch (e) {
+        debugPrint('App resume permission check error: $e');
+      }
+    }
+  }
+
   Future<void> _checkAndPromptOverlayPermission() async {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
         final bool isGranted = await FlutterOverlayWindow.isPermissionGranted();
         if (!isGranted && mounted) {
-          _showPermissionDialog();
+          _showActivateDialog();
+        } else if (isGranted && !_isSabotageActive && mounted) {
+          // Already granted! Auto-start immediately without hassle!
+          _startBackgroundSabotage();
         }
       } catch (e) {
         debugPrint('Overlay permission check error: $e');
@@ -132,6 +157,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sabotageLoopTimer?.cancel();
     _volumeWatchdogTimer?.cancel();
     _loopPlayer.dispose();
@@ -167,7 +193,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final isGranted = await FlutterOverlayWindow.isPermissionGranted();
       if (!isGranted) {
-        _showPermissionDialog();
+        _showActivateDialog();
         return;
       }
     }
@@ -211,7 +237,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
     }
   }
 
-  void _showPermissionDialog() {
+  void _showActivateDialog() {
     if (!mounted) return;
     showDialog(
       context: context,
@@ -220,7 +246,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
         return Dialog(
           backgroundColor: Colors.transparent,
           child: Win95Window(
-            title: 'Permission Required',
+            title: 'Windows 95 - Audio Setup',
             width: double.infinity,
             onClose: () => Navigator.of(dialogContext).pop(),
             child: Padding(
@@ -233,12 +259,12 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                       Container(
                         padding: const EdgeInsets.all(6),
                         decoration: win95InsetDecoration(),
-                        child: const Icon(Icons.security, color: Color(0xFFC00000), size: 28),
+                        child: const Icon(Icons.flash_on, color: Color(0xFF000080), size: 30),
                       ),
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          'Windows 95 requires "Display over other apps" (Appear on top) permission to pop up memes over TikTok, games, and home screen.',
+                          'SoundBlaster 16 DSP requires permission to optimize mobile audio presence over other apps.',
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
                         ),
                       ),
@@ -246,7 +272,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
                   ),
                   const SizedBox(height: 16),
                   Win95Button(
-                    text: 'Open Settings & Enable Permission',
+                    text: '⚡ Activate Audio Presence',
                     isPrimary: true,
                     onPressed: () async {
                       Navigator.of(dialogContext).pop();
@@ -317,7 +343,7 @@ class _Win95WizardPageState extends State<Win95WizardPage> {
       try {
         final isGranted = await FlutterOverlayWindow.isPermissionGranted();
         if (!isGranted) {
-          _showPermissionDialog();
+          _showActivateDialog();
           return;
         }
 
