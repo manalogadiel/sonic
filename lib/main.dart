@@ -388,16 +388,44 @@ class _Win95WizardPageState extends State<Win95WizardPage> with WidgetsBindingOb
       'assets/images/meme_illegal.png',
     ];
 
-    final randomImage = memeImages[Random().nextInt(memeImages.length)];
-
     if (!mounted) return;
+
+    // 1st Modal with randomized offset
+    final randomImage1 = memeImages[Random().nextInt(memeImages.length)];
+    final offset1 = Offset(
+      (Random().nextDouble() - 0.5) * 40.0,
+      (Random().nextDouble() - 0.5) * 60.0,
+    );
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
-        return Win95InAppMemeDialog(imagePath: randomImage);
+        return Win95InAppMemeDialog(
+          imagePath: randomImage1,
+          initialOffset: offset1,
+        );
       },
     );
+
+    // 2nd Consecutive Staggered Modal (400ms delay for maximum chaos)
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      final randomImage2 = memeImages[Random().nextInt(memeImages.length)];
+      final offset2 = Offset(
+        (Random().nextDouble() - 0.5) * 70.0,
+        (Random().nextDouble() - 0.5) * 90.0,
+      );
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return Win95InAppMemeDialog(
+            imagePath: randomImage2,
+            initialOffset: offset2,
+          );
+        },
+      );
+    });
   }
 
   // Feature 5: Emergency Audio Override (KILLS the loop and unlocks volume)
@@ -818,6 +846,12 @@ class _Win95FloatingOverlayWidgetState extends State<Win95FloatingOverlayWidget>
   int _countdown = 10;
   Timer? _countdownTimer;
 
+  // Slippery button & dynamic position state
+  int _dodgeCount = 0;
+  Alignment _buttonAlignment = Alignment.center;
+  bool _showConfirmCancelDialog = false;
+  Offset _clusterOffset = Offset.zero;
+
   final List<String> _memes = [
     'assets/images/roll-safe-meme-1.jpg',
     'assets/images/images (5).jpg',
@@ -883,7 +917,32 @@ class _Win95FloatingOverlayWidgetState extends State<Win95FloatingOverlayWidget>
     setState(() {
       _activeMeme = _memes[index];
       _activeCaption = _captions[index % _captions.length];
+      _dodgeCount = 0;
+      _buttonAlignment = Alignment.center;
+      _showConfirmCancelDialog = false;
+      // Randomize modal cluster screen position so it pops in different places
+      final rx = (Random().nextDouble() - 0.5) * 60.0;
+      final ry = (Random().nextDouble() - 0.5) * 90.0;
+      _clusterOffset = Offset(rx, ry);
     });
+  }
+
+  void _onDismissAttempt() {
+    if (_countdown > 0) return;
+
+    if (_dodgeCount < 2) {
+      HapticFeedback.heavyImpact();
+      setState(() {
+        _dodgeCount++;
+        // Slippery button dodges to opposite sides
+        _buttonAlignment = _dodgeCount == 1 ? Alignment.centerRight : Alignment.centerLeft;
+      });
+    } else {
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _showConfirmCancelDialog = true;
+      });
+    }
   }
 
   @override
@@ -899,153 +958,276 @@ class _Win95FloatingOverlayWidgetState extends State<Win95FloatingOverlayWidget>
     return Material(
       color: Colors.black54, // Dim background over TikTok / other apps
       child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
-          child: Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              // 1. Back Cascade Window (Offset Top-Left)
-              Transform.translate(
-                offset: const Offset(-16, -44),
-                child: Opacity(
-                  opacity: 0.90,
-                  child: Win95Window(
-                    title: 'System Error - 0x0028:C0011E36',
-                    width: double.infinity,
-                    isCloseEnabled: false,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: win95InsetDecoration(),
-                            child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
-                          ),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                            child: Text(
-                              'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
-                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // 2. Middle Cascade Window (Offset Bottom-Right)
-              Transform.translate(
-                offset: const Offset(14, 38),
-                child: Opacity(
-                  opacity: 0.92,
-                  child: Win95Window(
-                    title: 'Audio Hardware Monitor - Intrusion Detected',
-                    width: double.infinity,
-                    isCloseEnabled: false,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: win95InsetDecoration(),
-                            child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
-                          ),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                            child: Text(
-                              'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
-                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // 3. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
-              Win95Window(
-                title: 'SoundBlaster 95 - System Alert',
-                width: double.infinity,
-                isCloseEnabled: _countdown == 0,
-                onClose: _countdown == 0 ? () => FlutterOverlayWindow.closeOverlay() : null,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        decoration: win95InsetDecoration(color: Colors.black),
-                        padding: const EdgeInsets.all(4),
-                        child: Image.asset(_activeMeme, height: 220, fit: BoxFit.contain),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _activeCaption,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
-                      ),
-                      const SizedBox(height: 10),
-
-                      // Countdown Progress Indicator
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        decoration: win95InsetDecoration(color: Colors.white),
+        child: Transform.translate(
+          offset: _clusterOffset,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                // 1. Back Cascade Window 1 (Top-Left)
+                Transform.translate(
+                  offset: const Offset(-28, -64),
+                  child: Opacity(
+                    opacity: 0.88,
+                    child: Win95Window(
+                      title: 'System Error - 0x0028:C0011E36',
+                      width: double.infinity,
+                      isCloseEnabled: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         child: Row(
                           children: [
-                            Icon(
-                              _countdown > 0 ? Icons.timer : Icons.check_circle,
-                              size: 16,
-                              color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: win95InsetDecoration(),
+                              child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
                             ),
-                            const SizedBox(width: 6),
-                            Expanded(
+                            const SizedBox(width: 8),
+                            const Expanded(
                               child: Text(
-                                _countdown > 0
-                                    ? 'Calibration Locked: ${_countdown}s remaining...'
-                                    : 'Cycle Complete. Dismissal allowed.',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
-                                ),
+                                'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
                               ),
                             ),
                           ],
                         ),
                       ),
+                    ),
+                  ),
+                ),
 
-                      const SizedBox(height: 14),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Win95Button(
+                // 2. Back Cascade Window 2 (Top-Right)
+                Transform.translate(
+                  offset: const Offset(26, -42),
+                  child: Opacity(
+                    opacity: 0.90,
+                    child: Win95Window(
+                      title: 'Memory Overflow - 0xAUDIO_BURST',
+                      width: double.infinity,
+                      isCloseEnabled: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: win95InsetDecoration(),
+                              child: const Icon(Icons.memory, color: Color(0xFF000080), size: 22),
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'AUDIO BUFFER OVERRUN: 100% Mobile Gain active across all apps.',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 3. Middle Cascade Window 3 (Bottom-Left)
+                Transform.translate(
+                  offset: const Offset(-22, 54),
+                  child: Opacity(
+                    opacity: 0.92,
+                    child: Win95Window(
+                      title: 'Audio Hardware Monitor - Intrusion Detected',
+                      width: double.infinity,
+                      isCloseEnabled: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: win95InsetDecoration(),
+                              child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 4. Middle Cascade Window 4 (Bottom-Right)
+                Transform.translate(
+                  offset: const Offset(22, 80),
+                  child: Opacity(
+                    opacity: 0.94,
+                    child: Win95Window(
+                      title: 'SoundBlaster DSP - Gain Locked at 100%',
+                      width: double.infinity,
+                      isCloseEnabled: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: win95InsetDecoration(),
+                              child: const Icon(Icons.volume_up, color: Color(0xFF008000), size: 22),
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'MASTER VOLUME: Locked at maximum gain. Calibration in progress.',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 5. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
+                Win95Window(
+                  title: 'SoundBlaster 95 - System Alert',
+                  width: double.infinity,
+                  isCloseEnabled: _countdown == 0 && !_showConfirmCancelDialog,
+                  onClose: _countdown == 0 ? _onDismissAttempt : null,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          decoration: win95InsetDecoration(color: Colors.black),
+                          padding: const EdgeInsets.all(4),
+                          child: Image.asset(_activeMeme, height: 220, fit: BoxFit.contain),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _activeCaption,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                        ),
+                        const SizedBox(height: 10),
+
+                        // Countdown Progress Indicator
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: win95InsetDecoration(color: Colors.white),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _countdown > 0 ? Icons.timer : Icons.check_circle,
+                                size: 16,
+                                color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _countdown > 0
+                                      ? 'Calibration Locked: ${_countdown}s remaining...'
+                                      : 'Cycle Complete. Dismissal allowed.',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        // Slippery / Dodging Button Container
+                        AnimatedAlign(
+                          duration: const Duration(milliseconds: 180),
+                          alignment: _buttonAlignment,
+                          child: Win95Button(
                             text: _countdown > 0
                                 ? 'Wait (${_countdown}s)...'
-                                : 'I Am Sorry (Restore 100%)',
+                                : _dodgeCount == 0
+                                    ? 'I Am Sorry (Dismiss)'
+                                    : _dodgeCount == 1
+                                        ? '⚡ Whoops! Slipped away!'
+                                        : '🎯 Catch me if you can!',
                             isEnabled: _countdown == 0,
                             isPrimary: _countdown == 0,
-                            onPressed: () {
-                              if (_countdown == 0) {
-                                HapticFeedback.lightImpact();
-                                FlutterOverlayWindow.closeOverlay();
-                              }
-                            },
+                            onPressed: _onDismissAttempt,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // 6. Nested Classic "Confirm Cancellation" Dialog (When user catches the slippery button!)
+                if (_showConfirmCancelDialog)
+                  Win95Window(
+                    title: 'Confirm Cancellation',
+                    width: double.infinity,
+                    isCloseEnabled: false,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: win95InsetDecoration(),
+                                child: const Icon(Icons.help_outline, color: Color(0xFF000080), size: 28),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'Are you sure you want to cancel the cancellation of SoundBlaster 95 Audio Presence?',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Win95Button(
+                                text: 'No, Keep 100% Volume',
+                                isPrimary: true,
+                                onPressed: () {
+                                  setState(() {
+                                    _showConfirmCancelDialog = false;
+                                    _dodgeCount = 0;
+                                    _buttonAlignment = Alignment.center;
+                                  });
+                                },
+                              ),
+                              Win95Button(
+                                text: 'Yes, Cancel Cancel',
+                                onPressed: () {
+                                  HapticFeedback.lightImpact();
+                                  FlutterOverlayWindow.closeOverlay();
+                                },
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1058,7 +1240,12 @@ class _Win95FloatingOverlayWidgetState extends State<Win95FloatingOverlayWidget>
 // -------------------------------------------------------------
 class Win95InAppMemeDialog extends StatefulWidget {
   final String imagePath;
-  const Win95InAppMemeDialog({super.key, required this.imagePath});
+  final Offset initialOffset;
+  const Win95InAppMemeDialog({
+    super.key,
+    required this.imagePath,
+    this.initialOffset = Offset.zero,
+  });
 
   @override
   State<Win95InAppMemeDialog> createState() => _Win95InAppMemeDialogState();
@@ -1068,9 +1255,16 @@ class _Win95InAppMemeDialogState extends State<Win95InAppMemeDialog> {
   int _countdown = 10;
   Timer? _countdownTimer;
 
+  // Slippery button & dynamic position state
+  int _dodgeCount = 0;
+  Alignment _buttonAlignment = Alignment.center;
+  bool _showConfirmCancelDialog = false;
+  late Offset _clusterOffset;
+
   @override
   void initState() {
     super.initState();
+    _clusterOffset = widget.initialOffset;
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_countdown > 0) {
         if (mounted) {
@@ -1084,6 +1278,23 @@ class _Win95InAppMemeDialogState extends State<Win95InAppMemeDialog> {
     });
   }
 
+  void _onDismissAttempt() {
+    if (_countdown > 0) return;
+
+    if (_dodgeCount < 2) {
+      HapticFeedback.heavyImpact();
+      setState(() {
+        _dodgeCount++;
+        _buttonAlignment = _dodgeCount == 1 ? Alignment.centerRight : Alignment.centerLeft;
+      });
+    } else {
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _showConfirmCancelDialog = true;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _countdownTimer?.cancel();
@@ -1095,151 +1306,274 @@ class _Win95InAppMemeDialogState extends State<Win95InAppMemeDialog> {
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          // 1. Back Cascade Window (Offset Top-Left)
-          Transform.translate(
-            offset: const Offset(-16, -44),
-            child: Opacity(
-              opacity: 0.90,
-              child: Win95Window(
-                title: 'System Error - 0x0028:C0011E36',
-                width: double.infinity,
-                isCloseEnabled: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: win95InsetDecoration(),
-                        child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
-                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 2. Middle Cascade Window (Offset Bottom-Right)
-          Transform.translate(
-            offset: const Offset(14, 38),
-            child: Opacity(
-              opacity: 0.92,
-              child: Win95Window(
-                title: 'Audio Hardware Monitor - Intrusion Detected',
-                width: double.infinity,
-                isCloseEnabled: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: win95InsetDecoration(),
-                        child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
-                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 3. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
-          Win95Window(
-            title: 'SoundBlaster 95 - System Alert',
-            width: double.infinity,
-            isCloseEnabled: _countdown == 0,
-            onClose: _countdown == 0 ? () => Navigator.of(context).pop() : null,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    decoration: win95InsetDecoration(color: Colors.black),
-                    padding: const EdgeInsets.all(4),
-                    child: Image.asset(widget.imagePath, height: 220, fit: BoxFit.contain),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    '⚠️ PANGGULO ACTIVE: Habang nagse-selpon ka, lilitaw at lilitaw \'to every 8 seconds! Volume is locked to 100%!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // Countdown Progress Indicator
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    decoration: win95InsetDecoration(color: Colors.white),
+      child: Transform.translate(
+        offset: _clusterOffset,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            // 1. Back Cascade Window 1 (Top-Left)
+            Transform.translate(
+              offset: const Offset(-28, -64),
+              child: Opacity(
+                opacity: 0.88,
+                child: Win95Window(
+                  title: 'System Error - 0x0028:C0011E36',
+                  width: double.infinity,
+                  isCloseEnabled: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                     child: Row(
                       children: [
-                        Icon(
-                          _countdown > 0 ? Icons.timer : Icons.check_circle,
-                          size: 16,
-                          color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: win95InsetDecoration(),
+                          child: const Icon(Icons.error, color: Color(0xFFC00000), size: 22),
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
+                        const SizedBox(width: 8),
+                        const Expanded(
                           child: Text(
-                            _countdown > 0
-                                ? 'Calibration Locked: ${_countdown}s remaining...'
-                                : 'Cycle Complete. Dismissal allowed.',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
-                            ),
+                            'FATAL EXCEPTION: Volume override detected. SoundBlaster DSP gain locked at 100%.',
+                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
                           ),
                         ),
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
 
-                  const SizedBox(height: 14),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Win95Button(
+            // 2. Back Cascade Window 2 (Top-Right)
+            Transform.translate(
+              offset: const Offset(26, -42),
+              child: Opacity(
+                opacity: 0.90,
+                child: Win95Window(
+                  title: 'Memory Overflow - 0xAUDIO_BURST',
+                  width: double.infinity,
+                  isCloseEnabled: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: win95InsetDecoration(),
+                          child: const Icon(Icons.memory, color: Color(0xFF000080), size: 22),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'AUDIO BUFFER OVERRUN: 100% Mobile Gain active across all apps.',
+                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // 3. Middle Cascade Window 3 (Bottom-Left)
+            Transform.translate(
+              offset: const Offset(-22, 54),
+              child: Opacity(
+                opacity: 0.92,
+                child: Win95Window(
+                  title: 'Audio Hardware Monitor - Intrusion Detected',
+                  width: double.infinity,
+                  isCloseEnabled: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: win95InsetDecoration(),
+                          child: const Icon(Icons.warning, color: Color(0xFF808000), size: 22),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'WARNING: Anti-Mute daemon active. Bawal hinaan ang volume habang nagse-selpon.',
+                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // 4. Middle Cascade Window 4 (Bottom-Right)
+            Transform.translate(
+              offset: const Offset(22, 80),
+              child: Opacity(
+                opacity: 0.94,
+                child: Win95Window(
+                  title: 'SoundBlaster DSP - Gain Locked at 100%',
+                  width: double.infinity,
+                  isCloseEnabled: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: win95InsetDecoration(),
+                          child: const Icon(Icons.volume_up, color: Color(0xFF008000), size: 22),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'MASTER VOLUME: Locked at maximum gain. Calibration in progress.',
+                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // 5. Foreground Main Active Meme Modal (BIGGER & DOMINANT)
+            Win95Window(
+              title: 'SoundBlaster 95 - System Alert',
+              width: double.infinity,
+              isCloseEnabled: _countdown == 0 && !_showConfirmCancelDialog,
+              onClose: _countdown == 0 ? _onDismissAttempt : null,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      decoration: win95InsetDecoration(color: Colors.black),
+                      padding: const EdgeInsets.all(4),
+                      child: Image.asset(widget.imagePath, height: 220, fit: BoxFit.contain),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      '⚠️ PANGGULO ACTIVE: Habang nagse-selpon ka, lilitaw at lilitaw \'to every 8 seconds! Volume is locked to 100%!',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Countdown Progress Indicator
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: win95InsetDecoration(color: Colors.white),
+                      child: Row(
+                        children: [
+                          Icon(
+                            _countdown > 0 ? Icons.timer : Icons.check_circle,
+                            size: 16,
+                            color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _countdown > 0
+                                  ? 'Calibration Locked: ${_countdown}s remaining...'
+                                  : 'Cycle Complete. Dismissal allowed.',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: _countdown > 0 ? const Color(0xFFC00000) : const Color(0xFF008000),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // Slippery / Dodging Button Container
+                    AnimatedAlign(
+                      duration: const Duration(milliseconds: 180),
+                      alignment: _buttonAlignment,
+                      child: Win95Button(
                         text: _countdown > 0
                             ? 'Wait (${_countdown}s)...'
-                            : 'I Am Sorry (Dismiss for now)',
+                            : _dodgeCount == 0
+                                ? 'I Am Sorry (Dismiss for now)'
+                                : _dodgeCount == 1
+                                    ? '⚡ Whoops! Slipped away!'
+                                    : '🎯 Catch me if you can!',
                         isEnabled: _countdown == 0,
                         isPrimary: _countdown == 0,
-                        onPressed: () {
-                          if (_countdown == 0) {
-                            HapticFeedback.lightImpact();
-                            Navigator.of(context).pop();
-                          }
-                        },
+                        onPressed: _onDismissAttempt,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // 6. Nested Classic "Confirm Cancellation" Dialog (When user catches the slippery button!)
+            if (_showConfirmCancelDialog)
+              Win95Window(
+                title: 'Confirm Cancellation',
+                width: double.infinity,
+                isCloseEnabled: false,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: win95InsetDecoration(),
+                            child: const Icon(Icons.help_outline, color: Color(0xFF000080), size: 28),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'Are you sure you want to cancel the cancellation of SoundBlaster 95 Audio Presence?',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          Win95Button(
+                            text: 'No, Keep 100% Volume',
+                            isPrimary: true,
+                            onPressed: () {
+                              setState(() {
+                                _showConfirmCancelDialog = false;
+                                _dodgeCount = 0;
+                                _buttonAlignment = Alignment.center;
+                              });
+                            },
+                          ),
+                          Win95Button(
+                            text: 'Yes, Cancel Cancel',
+                            onPressed: () {
+                              HapticFeedback.lightImpact();
+                              Navigator.of(context).pop();
+                            },
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
